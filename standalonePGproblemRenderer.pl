@@ -15,7 +15,6 @@
 # Artistic License for more details.
 ################################################################################
 
-package OpaqueServer::RenderProblem;
 =head1 NAME
 
 Render one pg problem problem from the command line by directly accessing 
@@ -55,23 +54,27 @@ BEGIN {
 	$ENV{MOD_PERL_API_VERSION}=2;
 }
 
-our $UNIT_TESTS_ON =1;
-our $HTML_OUTPUT   =0;
- # Path to a temporary file for storing the output of renderProblem.pl
-use constant  TEMPOUTPUTFILE   => "$ENV{WEBWORK_ROOT}/DATA/renderProblemOutput.html"; 
-die "You must first create an output file at ".TEMPOUTPUTFILE()." with permissions 777 " unless
--w TEMPOUTPUTFILE();
- # Command line for displaying the temporary file in a browser.
+our $UNIT_TESTS_ON =0;
+our $HTML_OUTPUT   =0;  #set this with a command line option
+
+### Command line for displaying the temporary file in a browser.
  #use constant  DISPLAY_COMMAND  => 'open -a firefox ';   #browser opens tempoutputfile above
   use constant  DISPLAY_COMMAND  => "open -a 'Google Chrome' ";
  #use constant DISPLAY_COMMAND => " less ";   # display tempoutputfile with less
 
+### Path to a temporary file for storing the output of renderProblem.pl
+ use constant  TEMPOUTPUTFILE   => "$ENV{WEBWORK_ROOT}/DATA/renderProblemOutput.html"; 
+ die "You must first create an output file at ".TEMPOUTPUTFILE().
+     " with permissions 777 " unless -w TEMPOUTPUTFILE();
+ 
+### Path to log file for recording output
 use constant LOG_FILE => "$ENV{WEBWORK_ROOT}/DATA/bad_problems.txt";
-die "You must first create an output file at ".LOG_FILE()." with permissions 777 " unless
--w LOG_FILE();
+die "You must first create an output file at ".LOG_FILE().
+     " with permissions 777 " unless -w LOG_FILE();
 
-  
-use constant DISPLAYMODE   => 'MathJax'; 
+
+### set display mode
+use constant DISPLAYMODE   => 'images'; 
 
 
 ###################################
@@ -87,6 +90,7 @@ BEGIN {
 	$topDir =~ s|webwork2?$||;   # remove webwork2 link
 	my $root_dir = "$topDir/ww_opaque_server";
 	my $root_pg_dir = "$topDir/pg";
+	$WeBWorK::Constants::PG_DIRECTORY = $root_pg_dir;
 	my $root_webwork2_dir = "$topDir/webwork2";
 
 	my $rpc_url = '/opaqueserver_rpc';
@@ -131,15 +135,19 @@ use WeBWorK::DB;
 use WeBWorK::Utils::Tasks qw(fake_set fake_problem fake_user);   # may not be needed
 use WeBWorK::PG; 
 use WeBWorK::PG::ImageGenerator; 
-use WeBWorK::DB::Utils qw(global2user); 
-use WeBWorK::Form;
-use WeBWorK::Debug;
+#use WeBWorK::DB::Utils qw(global2user); 
+#use WeBWorK::Form;
+#use WeBWorK::Debug;
 use WeBWorK::CourseEnvironment;
 use PGUtil qw(pretty_print not_null);
 use constant fakeSetName => "Undefined_Set";
 use constant fakeUserName => "Undefined_User";
-use vars qw($courseName);
 
+use WebworkClient;
+use Time::HiRes qw/time/;
+
+use vars qw($courseName);
+use 5.10.0;
 $Carp::Verbose = 1;
 
 
@@ -149,13 +157,30 @@ $Carp::Verbose = 1;
 our $ce = create_course_environment();
 my $dbLayout = $ce->{dbLayout};	
 our $db = WeBWorK::DB->new($dbLayout);
-
+# FIXME -- can we create minimal local versions of $ce and $db so that no modules from 
+# webwork2/lib are required? only objects from pg/lib
 
 ########################################################################
-# Run problem on a given file
+# Find the source of the problem file
 ########################################################################
+# store the time before we invoke the content generator
+my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
 
 my $filePath = $ARGV[0];
+# filter mode  main code
+die "Unable to read file $filePath \n" unless -r $filePath;
+# say "reading $filePath";
+my $source;
+eval {
+	local($/);
+	$source   = <>; #slurp standard input
+};
+die "Something is wrong with the contents of $filePath\n" if $@;
+#say "source is $source";
+
+#######################################################################
+# Process the pg file
+#######################################################################
 my $formFields = {                            #$r->param();
     	AnSwEr0001 =>'foo',
     	AnSwEr0002 => 'bar',
@@ -164,9 +189,15 @@ my $formFields = {                            #$r->param();
     	prec       =>  1000,
     	
 };
-my $pg = standaloneRenderer($filePath, $formFields);
+$formFields ={};
+my $pg = standaloneRenderer(\$source, $formFields);
 my $body_text = $pg->{body_text};
-my $fileName = $filePath;
+
+
+#######################################################################
+# Return the output
+#######################################################################
+
 
 if ($HTML_OUTPUT) {
 	my $output= <<EOF;
@@ -184,28 +215,24 @@ $body_text
 EOF
 
 	local(*FH);
-	open(FH, '>'.TEMPOUTPUTFILE) or die "Can't open file ".TEMPOUTPUTFILE()." for writing";
-	print  $output;
+	open(FH, '>', TEMPOUTPUTFILE()) or die "Can't open file ".TEMPOUTPUTFILE()." for writing";
+	print FH $output;
 	close(FH);
 
 	system(DISPLAY_COMMAND().TEMPOUTPUTFILE());
-
-} elsif ($fileName) {
-	local(*FH);
-	
-	open(FH, ">>".LOG_FILE()) || die "Can't open log file ". LOG_FILE();
+} elsif ($filePath) {
 	my $return_string='';
 	if ( $pg )    {
 	        print "\n\n Result of renderProblem \n\n" if $UNIT_TESTS_ON;
 	        print $pg,"\n" if $UNIT_TESTS_ON;
-	        print join(" ", keys %$pg,"\n");
-	        print $pg->{body_text};
+	        #print join(" ", keys %$pg,"\n");
+	        #print $pg->{body_text};
 	    if (not defined $pg) {  #FIXME make sure this is the right error message if site is unavailable
 	    	$return_string = "Empty output while  rendering this problem\n";
 	    } elsif (defined($pg->{flags}->{error_flag}) and $pg->{flags}->{error_flag} ) {
-			$return_string = "0\t $fileName has errors\n";
+			$return_string = "0\t $filePath has errors\n";
 		} elsif (defined($pg->{errors}) and $pg->{errors} ){
-			$return_string = "0\t $fileName has syntax errors\n";
+			$return_string = "0\t $filePath has syntax errors\n";
 		} else {
 			# 
 			if (defined($pg->{flags}->{DEBUG_messages}) ) {
@@ -233,23 +260,33 @@ EOF
 			$return_string = "0\t ".$return_string."\n" if $return_string;   # add a 0 if there was an warning or debug message.
 		}
 		unless ($return_string) {
-			$return_string = "1\t $fileName is ok\n";
+			$return_string = "1\t $filePath is ok\n";
 		} else {
-			$return_string = "0\t $fileName has errors\n";
+			$return_string = "0\t $filePath has errors\n";
 		}
 	} else {
 		
-		$return_string = "0\t $fileName has undetermined errors -- could not be read perhaps?\n";
+		$return_string = "0\t $filePath has undetermined errors -- could not be read perhaps?\n";
 	}
+	local(*FH);	
+	open(FH, ">>".LOG_FILE()) || die "Can't open log file ". LOG_FILE();
 	print FH $return_string;
 	close(FH);
 } else {
-    print "0 $fileName  something went wrong -- could not render file\n";
+    print "0 $filePath  something went wrong -- could not render file\n";
 	print STDERR "Useage: ./checkProblem.pl    [file_name]\n";
 	print STDERR "For example: ./checkProblem.pl    input.txt\n";
 	print STDERR "Output is sent to the log file: ",LOG_FILE();
 	
 }
+
+	##################################################
+	# log elapsed time
+	##################################################
+	my $scriptName = ($HTML_OUTPUT)?"standAlone-HTML_OUTPUT":"standAlone-CHECK_MODE";
+	my $cg_end = time;
+	my $cg_duration = $cg_end - $cg_start;
+	WebworkClient::writeRenderLogEntry("", "{script:$scriptName; file:$filePath; ". sprintf("duration: %.3f sec;", $cg_duration)." url: ; }",'');
 
 
 
@@ -300,9 +337,12 @@ sub  standaloneRenderer {
 	$problem->{value} = -1;	
 	if (ref $problemFile) {
 			$problem->source_file('');
-			$translationOptions->{r_source} = $problemFile; # a text string containing the problem
+			$translationOptions->{r_source} = $problemFile; 
+			# print "source is already read\n";
+			# a text string containing the problem
 	} else {
-			$problem->source_file($problemFile); # a path to the problem
+			$problem->source_file($problemFile); 
+			# a path to the problem (relative to the course template directory?)
 	}
 	
 	#FIXME temporary hack
@@ -323,6 +363,11 @@ sub  standaloneRenderer {
 	);
 		$pg;
 }
+
+
+####################################################################################
+# Utility functions
+####################################################################################
 
 ####################################################################################
 # Create_course_environment -- utility function
