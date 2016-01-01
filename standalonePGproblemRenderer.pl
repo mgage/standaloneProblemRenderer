@@ -210,7 +210,7 @@ $Carp::Verbose = 1;
  our $UNIT_TESTS_ON             = 0;
   
  ### Command line for displaying the temporary file in a browser.
- #use constant  DISPLAY_COMMAND  => 'open -a firefox ';   #browser opens tempoutputfile 
+#use constant  DISPLAY_COMMAND  => 'open -a firefox ';   #browser opens tempoutputfile 
 use constant  HTML_DISPLAY_COMMAND  => "open -a 'Google Chrome' "; # (MacOS command)
 use constant  HASH_DISPLAY_COMMAND => " less ";   # display tempoutputfile with less
 
@@ -224,6 +224,9 @@ use constant  HASH_DISPLAY_COMMAND => " less ";   # display tempoutputfile with 
 use constant LOG_FILE => "$ENV{WEBWORK_ROOT}/DATA/bad_problems.txt";
 die "You must first create an output file at ".LOG_FILE().
      " with permissions 777 " unless -w LOG_FILE();
+
+### Command for editing the pg source file in the browswer
+use constant EDIT_COMMAND =>"bbedit";   # for Mac BBedit editor (used as `EDIT_COMMAND() . " $file_path")
 
 ### set display mode
 use constant DISPLAYMODE   => 'MathJax'; 
@@ -745,16 +748,9 @@ sub display_inputs {
 }
 sub edit_source_file {
 	my $file_path = shift;
-	system("bbedit $file_path");
+	system(EDIT_COMMAND()." $file_path");
 }
-########################################################################
-# Subroutine which renders the problem
-########################################################################
-# TODO 
-#      allow for formField inputs with the response
-#      allow problem seed input
-#      allow for adjustment of other options
-########################################################################
+
 
 sub  standaloneRenderer {
     #print "entering standaloneRenderer\n\n";
