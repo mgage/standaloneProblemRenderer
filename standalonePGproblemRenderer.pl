@@ -114,6 +114,10 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 =item   -e
 	Open the source file in an editor. 
 	
+=item   --tex
+	Process question in TeX mode and output to the command line
+
+	
 =item   
 
 	The single letter options can be "bundled" e.g.  -vcCbB
@@ -214,7 +218,7 @@ $Carp::Verbose = 1;
 use constant  HTML_DISPLAY_COMMAND  => "open -a 'Google Chrome' "; # (MacOS command)
 use constant  HASH_DISPLAY_COMMAND => " less ";   # display tempoutputfile with less
 
-### Path to a temporary file for storing the output of renderProblem.pl
+### Path to a temporary file for storing the output of sendXMLRPC.pl
  use constant  TEMPOUTPUTDIR   => "$ENV{WEBWORK_ROOT}/DATA/"; 
  die "You must make the directory ".TEMPOUTPUTDIR().
      " writeable " unless -w TEMPOUTPUTDIR();
@@ -227,6 +231,9 @@ die "You must first create an output file at ".LOG_FILE().
 
 ### Command for editing the pg source file in the browswer
 use constant EDIT_COMMAND =>"bbedit";   # for Mac BBedit editor (used as `EDIT_COMMAND() . " $file_path")
+
+### Command for editing and viewing the tex output of the pg question.
+use constant TEX_DISPLAY_COMMAND =>"open -a 'TeXShop'";
 
 ### set display mode
 use constant DISPLAYMODE   => 'MathJax'; 
@@ -252,6 +259,7 @@ my $verbose = '';
 my $credentials_path;
 my $format = 'standard';
 my $edit_source_file = '';
+my $display_tex_output='';
 my $print_answer_hash;
 my $print_answer_group;
 my $print_pg_hash;
@@ -268,6 +276,7 @@ GetOptions(
 	'C' => \$record_ok2,
 	'v' => \$verbose,
 	'e' => \$edit_source_file, 
+	'tex' => \$display_tex_output,
 	'list=s' =>\$read_list_from_this_file,   # read file containing list of full file paths
 	'pg' 			=> \$print_pg_hash,
 	'anshash' 		=> \$print_answer_hash,
@@ -356,6 +365,15 @@ our $db = WeBWorK::DB->new($dbLayout);
 # END build  client defaults
 ###################################
 
+#allow credentials to overrride the default displayMode and the browser display
+our $HTML_DISPLAY_COMMAND = HTML_DISPLAY_COMMAND();
+our $DISPLAYMODE          = DISPLAYMODE();
+our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
+
+##################################################
+#  END gathering credentials for client
+##################################################
+
 
 ##################################################
 #  set default inputs for the problem
@@ -366,13 +384,12 @@ my $default_input = {
 };
 
 
-my $default_form_data = {             
-    	displayMode => DISPLAYMODE(),
-    	outputformat => 'standard',
-    	problemSeed => PROBLEMSEED(),
-    	
+my $default_form_data = { 
+		displayMode				=> $DISPLAYMODE,
+		outputformat 			=> $format//'standard',
+		problemSeed             => PROBLEMSEED(),
 };
-#$formFields ={};
+
 ##################################################
 #  end build client
 ##################################################
@@ -446,7 +463,16 @@ sub process_pg_file {
 	my $problemSeed1 = 1112;
 	my $form_data1 = { %$default_form_data,
 					  problemSeed => $problemSeed1};
-
+	if ($display_tex_output) {
+		my $form_data2 = {
+			%$form_data1,
+			displayMode  =>'tex',
+			outputformat => 'tex',
+		};
+		my ($error_flag, $formatter, $error_string) = 
+	    	process_problem($file_path, $default_input, $form_data2);
+	    display_tex_output($file_path, $formatter)  if $display_tex_output;
+	}
 	my ($error_flag, $formatter, $error_string) = 
 	    process_problem($file_path, $default_input, $form_data1);
 	# extract and display result
@@ -612,7 +638,25 @@ sub process_problem {
 	return $error_flag, $formatter, $error_string;
 }
 
+sub display_tex_output {
+	my $file_path = shift;
+	my $xmlrpc_client = shift;
+	my $output_text = $xmlrpc_client->formatRenderedProblem;
+	$file_path =~s|/$||;   # remove final /
+	$file_path =~ m|/?([^/]+)$|;
+	my $file_name = $1;
+	$file_name =~ s/\.\w+$/\.tex/;    # replace extension with html
+	my $output_file = TEMPOUTPUTDIR().$file_name;
+	local(*FH);
+	open(FH, '>', $output_file) or die "Can't open file $output_file for writing";
+	print FH $output_text;
+	close(FH);
+	# restore values
+	system($TEX_DISPLAY_COMMAND." ".$output_file);
+#	sleep 5;   #wait 5 seconds
+#	unlink($output_file);
 
+}
 sub	display_html_output {  #display the problem in a browser
 	my $file_path = shift;
 	my $xmlrpc_client = shift;
@@ -627,7 +671,7 @@ sub	display_html_output {  #display the problem in a browser
 	print FH $output_text;
 	close(FH);
 
-	system(HTML_DISPLAY_COMMAND()." ".$output_file);
+	system($HTML_DISPLAY_COMMAND." ".$output_file);
 	sleep 1;   #wait 1 seconds
 	unlink($output_file);
 }
@@ -1039,6 +1083,9 @@ DETAILS
 
     -e
 				Open the source file in an editor. 
+
+	--tex    
+				Process question in TeX mode and output to the command line
 
                 The single letter options can be "bundled" e.g.  -vcCbB
 
