@@ -184,7 +184,7 @@ BEGIN {
 use lib "$WeBWorK::Constants::WEBWORK_DIRECTORY/lib";
 use lib "$WeBWorK::Constants::PG_DIRECTORY/lib";
 use Carp;
-use Crypt::SSLeay;  # needed for https
+#use Crypt::SSLeay;  # needed for https
 use Time::HiRes qw/time/;
 use MIME::Base64 qw( encode_base64 decode_base64);
 use Getopt::Long qw[:config no_ignore_case bundling];
@@ -235,6 +235,9 @@ use constant EDIT_COMMAND =>"bbedit";   # for Mac BBedit editor (used as `EDIT_C
 ### Command for editing and viewing the tex output of the pg question.
 use constant TEX_DISPLAY_COMMAND =>"open -a 'TeXShop'";
 
+### Command for editing and viewing the tex output of the pg question.
+use constant PDF_DISPLAY_COMMAND =>"open -a 'Preview'";
+
 ### set display mode
 use constant DISPLAYMODE   => 'MathJax'; 
 use constant PROBLEMSEED   => '987654321'; 
@@ -260,6 +263,7 @@ my $credentials_path;
 my $format = 'standard';
 my $edit_source_file = '';
 my $display_tex_output='';
+my $display_pdf_output='';
 my $print_answer_hash;
 my $print_answer_group;
 my $print_pg_hash;
@@ -277,6 +281,7 @@ GetOptions(
 	'v' => \$verbose,
 	'e' => \$edit_source_file, 
 	'tex' => \$display_tex_output,
+	'pdf' => \$display_pdf_output,
 	'list=s' =>\$read_list_from_this_file,   # read file containing list of full file paths
 	'pg' 			=> \$print_pg_hash,
 	'anshash' 		=> \$print_answer_hash,
@@ -369,6 +374,7 @@ our $db = WeBWorK::DB->new($dbLayout);
 our $HTML_DISPLAY_COMMAND = HTML_DISPLAY_COMMAND();
 our $DISPLAYMODE          = DISPLAYMODE();
 our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
+our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
 
 ##################################################
 #  END gathering credentials for client
@@ -463,12 +469,13 @@ sub process_pg_file {
 	my $problemSeed1 = 1112;
 	my $form_data1 = { %$default_form_data,
 					  problemSeed => $problemSeed1};
-	if ($display_tex_output) {
+	if ($display_tex_output or $display_pdf_output) {
 		my $form_data2 = {
 			%$form_data1,
 			displayMode  =>'tex',
 			outputformat => 'tex',
 		};
+		print "process tex files\n";
 		my ($error_flag, $formatter, $error_string) = 
 	    	process_problem($file_path, $default_input, $form_data2);
 	    display_tex_output($file_path, $formatter)  if $display_tex_output;
@@ -645,14 +652,27 @@ sub display_tex_output {
 	$file_path =~s|/$||;   # remove final /
 	$file_path =~ m|/?([^/]+)$|;
 	my $file_name = $1;
-	$file_name =~ s/\.\w+$/\.tex/;    # replace extension with html
+	$file_name =~ s/\.\w+$/\.tex/;    # replace extension with tex
 	my $output_file = TEMPOUTPUTDIR().$file_name;
 	local(*FH);
 	open(FH, '>', $output_file) or die "Can't open file $output_file for writing";
 	print FH $output_text;
 	close(FH);
-	# restore values
-	system($TEX_DISPLAY_COMMAND." ".$output_file);
+	print "tex result to $output_file\n";
+	if ($display_pdf_output) {
+		print "pdf mode\n";
+		my $pdf_file_name = $file_name;
+		$pdf_file_name =~ s/\.\w+$/\.pdf/;    # replace extension with pdf
+		my $pdf_path = TEMPOUTPUTDIR().$pdf_file_name;
+		print "pdflatex $output_file\n";
+		system("pdflatex $output_file");
+		print "pdflatex to $pdf_path DONE\n";
+		# this is doable but will require changing directories
+		# look at the solution done using hardcopy
+		system("open -a Preview ". $pdf_path);
+	} else {
+		system($TEX_DISPLAY_COMMAND." ".$output_file);
+	}
 #	sleep 5;   #wait 5 seconds
 #	unlink($output_file);
 
