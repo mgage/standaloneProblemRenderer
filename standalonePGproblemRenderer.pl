@@ -159,10 +159,12 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 
 use strict;
 use warnings;
-use lib ".";
-
+BEGIN {
+	use File::Basename;
+	$main::dirname = dirname(__FILE__);
+}
 $ENV{MOD_PERL_API_VERSION} = 2;
-
+use lib "$main::dirname";
 #######################################################
 # Find the webwork2 root directory
 #######################################################
