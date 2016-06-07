@@ -1,0 +1,5 @@
+This is a hacked version of Gettext to prevent error messages when localization is done inside of Safe compartments.
+
+Hopefully we can remove this soon.
+
+

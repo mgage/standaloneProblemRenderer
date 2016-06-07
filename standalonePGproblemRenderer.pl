@@ -159,6 +159,7 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 
 use strict;
 use warnings;
+use lib ".";
 
 $ENV{MOD_PERL_API_VERSION} = 2;
 
@@ -195,8 +196,8 @@ use WebworkClient;
 use FormatRenderedProblem;
 ##################
 use WeBWorK::DB;
-#use WeBWorK::PG; 
-use WeBWorK::Utils::Tasks qw(fake_set fake_problem fake_user);   # may not be needed
+use WeBWorK::PG; 
+use WeBWorK::Utils::Tasks qw(fake_set fake_problem fake_user);   # may not be needed --only a few aspects of this class used??
 use WeBWorK::PG::ImageGenerator; 
 use PGUtil qw(pretty_print not_null);
 use constant fakeSetName => "Undefined_Set";
