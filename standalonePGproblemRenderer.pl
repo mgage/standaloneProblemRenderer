@@ -699,7 +699,7 @@ sub	display_html_output {  #display the problem in a browser
 	unlink($output_file);
 }
 
-sub display_hash_output {   # print the entire hash output to the command line
+sub display_hash_output {   # print the entire hash output to the command line	
 	my $file_path = shift;
 	my $formatter = shift;
 	my $output_text = $formatter->formatRenderedProblem;
@@ -709,12 +709,14 @@ sub display_hash_output {   # print the entire hash output to the command line
 	$file_name =~ s/\.\w+$/\.txt/;    # replace extension with html
 	my $output_file = TEMPOUTPUTDIR().$file_name;
 	my $output_text2 = pretty_print_rh($output_text);
-	local(*FH);
-	open(FH, '>', $output_file) or die "Can't open file $output_file writing";
-	print FH $output_text2;
-	close(FH);
+	print STDOUT $output_text2;
 
-	system(HASH_DISPLAY_COMMAND().$output_file."; rm $output_file;");
+# 	local(*FH);
+# 	open(FH, '>', $output_file) or die "Can't open file $output_file writing";
+# 	print FH $output_text2;
+# 	close(FH);
+# 
+# 	system(HASH_DISPLAY_COMMAND().$output_file."; rm $output_file;");
 	#sleep 1; #wait 1 seconds
 	#unlink($output_file);
 }
