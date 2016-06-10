@@ -27,11 +27,7 @@ context of providing a webwork homework set user  an existing problem set.
 
 It can be used to create a live version of a single problem, one that is not
 part of any set, and can facilitate editing these problems outside of the 
-context of WeBWorK2. 
-
-This script will take a list of files or directories
-and send it to a WeBWorK daemon webservice
-to have it rendered.  For directories each .pg file under that 
+context of WeBWorK2.  For directories each .pg file under that 
 directory is rendered. 
 
 The results can be displayed in a browser (use -b or -B switches) as was
@@ -43,6 +39,9 @@ The capital letter switches, -B, -H, and -C render the question twice.  The firs
 time returns an answer hash which contains the correct answers. The question is
 then resubmitted to the renderer with the correct answers filled in and displayed.  
 
+This script behaves similarly to sendXMLRPC.pl but does not require
+a credentials file.  It does require a local WeBWorK site on the 
+same computer.
 
 =cut
 
@@ -51,7 +50,17 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 	standalonePGproblemRenderer -vcCbB input.pg 
 
 =head1   DETAILS
+
+=head2 credentials file
 	No local configuration file is needed for this client.
+
+
+
+
+
+
+
+
 =cut
 
 =head2 Options
@@ -78,7 +87,7 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 
 =item  -h  
 
-	Prints to the command line the entire object returned by 
+	Prints to STDOUT the entire object returned by 
     the webwork_client xmlrpc request.
     This includes the answer information displayed by -a and -A and much more.
 
@@ -133,7 +142,7 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 	Triggers the printing of the all of the variables available to the PG question. 
     The table appears within the question content. Use in conjunction with -b or -B.
 
-=item		--anshash 
+=item	--anshash 
 
 	Prints the answer hash for each answer in the PG_debug output which appears below
     the question content. Use in conjunction with -b or -B. 
@@ -146,6 +155,11 @@ then resubmitted to the renderer with the correct answers filled in and displaye
     the PG_debug output which follows the question content.  Use in conjunction with -b or -B.
     This contains more information than printing the answer hash. (perhaps too much). 
 
+=item   --resource
+
+	Prints the resources used by the question. The information appears in 
+    the PG_debug output which follows the question content.  Use in conjunction with -b or -B.
+
 =item	--credentials=s
 
  	Specifies a file s where the  credential information can be found.
@@ -153,21 +167,29 @@ then resubmitted to the renderer with the correct answers filled in and displaye
 =item	--help
 
        Prints help information. 
+       
+=item  --log 
+       Sets path to log file
 
 =back
 =cut
 
 use strict;
 use warnings;
+
+
+#######################################################
+# Find the webwork2 root directory
+#######################################################
 BEGIN {
 	use File::Basename;
 	$main::dirname = dirname(__FILE__);
 }
 $ENV{MOD_PERL_API_VERSION} = 2;
 use lib "$main::dirname";
-#######################################################
-# Find the webwork2 root directory
-#######################################################
+# some files such as FormatRenderedProblem.pm may need to be in the same directory
+
+
 BEGIN {
         die "WEBWORK_ROOT not found in environment. \n
              WEBWORK_ROOT can be defined in your .cshrc or .bashrc file\n
@@ -186,16 +208,18 @@ BEGIN {
 
 use lib "$WeBWorK::Constants::WEBWORK_DIRECTORY/lib";
 use lib "$WeBWorK::Constants::PG_DIRECTORY/lib";
-use Carp;
-#use Crypt::SSLeay;  # needed for https
+use 5.10.0;
+$Carp::Verbose = 1;
+
+#use Crypt::SSLeay;  # not needed
+use WebworkClient;
+use FormatRenderedProblem;
 use Time::HiRes qw/time/;
 use MIME::Base64 qw( encode_base64 decode_base64);
 use Getopt::Long qw[:config no_ignore_case bundling];
 use File::Find;
 use FileHandle;
 use Cwd 'abs_path';
-use WebworkClient;
-use FormatRenderedProblem;
 ##################
 use WeBWorK::DB;
 use WeBWorK::PG; 
@@ -206,8 +230,6 @@ use constant fakeSetName => "Undefined_Set";
 use constant fakeUserName => "Undefined_User";
 use vars qw($courseName);
 
-use 5.10.0;
-$Carp::Verbose = 1;
 
 #############################################
 # Configure displays for local operating system
@@ -216,10 +238,9 @@ $Carp::Verbose = 1;
 ### verbose output when UNIT_TESTS_ON =1;
  our $UNIT_TESTS_ON             = 0;
   
- ### Command line for displaying the temporary file in a browser.
-#use constant  DISPLAY_COMMAND  => 'open -a firefox ';   #browser opens tempoutputfile 
+#Default display commands.
 use constant  HTML_DISPLAY_COMMAND  => "open -a 'Google Chrome' "; # (MacOS command)
-use constant  HASH_DISPLAY_COMMAND => " less ";   # display tempoutputfile with less
+use constant  HASH_DISPLAY_COMMAND => "";   # display tempoutputfile to STDOUT
 
 ### Path to a temporary file for storing the output of sendXMLRPC.pl
  use constant  TEMPOUTPUTDIR   => "$ENV{WEBWORK_ROOT}/DATA/"; 
@@ -227,10 +248,8 @@ use constant  HASH_DISPLAY_COMMAND => " less ";   # display tempoutputfile with 
      " writeable " unless -w TEMPOUTPUTDIR();
  use constant TEMPOUTPUTFILE  => TEMPOUTPUTDIR()."temporary_output.html";
     
-### Path to a temporary file for storing the output of sendXMLRPC.pl
-use constant LOG_FILE => "$ENV{WEBWORK_ROOT}/DATA/bad_problems.txt";
-die "You must first create an output file at ".LOG_FILE().
-     " with permissions 777 " unless -w LOG_FILE();
+### Default path to a temporary file for storing the output of standalonePGproblemRenderer.pl
+use constant LOG_FILE => "$ENV{WEBWORK_ROOT}/DATA/standalone_results.log";
 
 ### Command for editing the pg source file in the browswer
 use constant EDIT_COMMAND =>"bbedit";   # for Mac BBedit editor (used as `EDIT_COMMAND() . " $file_path")
@@ -270,28 +289,32 @@ my $display_pdf_output='';
 my $print_answer_hash;
 my $print_answer_group;
 my $print_pg_hash;
+my $print_resource_hash;
 my $print_help_message;
 my $read_list_from_this_file;
+my $path_to_log_file;
 GetOptions(
-	'a' => \$display_ans_output1,
-	'A' => \$display_ans_output2,
-	'b' => \$display_html_output1,
-	'B' => \$display_html_output2,
-	'h' => \$display_hash_output1,
-	'H' => \$display_hash_output2,
-	'c' => \$record_ok1, # record_problem_ok1 needs to be written
-	'C' => \$record_ok2,
-	'v' => \$verbose,
-	'e' => \$edit_source_file, 
-	'tex' => \$display_tex_output,
-	'pdf' => \$display_pdf_output,
-	'list=s' =>\$read_list_from_this_file,   # read file containing list of full file paths
+	'a' 			=> \$display_ans_output1,
+	'A' 			=> \$display_ans_output2,
+	'b' 			=> \$display_html_output1,
+	'B' 			=> \$display_html_output2,
+	'h' 			=> \$display_hash_output1,
+	'H' 			=> \$display_hash_output2,
+	'c' 			=> \$record_ok1, # record_problem_ok1 needs to be written
+	'C' 			=> \$record_ok2,
+	'v' 			=> \$verbose,
+	'e' 			=> \$edit_source_file, 
+	'tex' 			=> \$display_tex_output,
+	'pdf' 			=> \$display_pdf_output,
+	'list=s' 		=>\$read_list_from_this_file,   # read file containing list of full file paths
 	'pg' 			=> \$print_pg_hash,
 	'anshash' 		=> \$print_answer_hash,
 	'ansgrp'  		=> \$print_answer_group,
+	'resource'      => \$print_resource_hash,
 	'f=s' 			=> \$format,
 	'credentials=s' => \$credentials_path,
 	'help'          => \$print_help_message,
+	'log=s'         => \$path_to_log_file,
 );
 
 
@@ -306,6 +329,71 @@ print_help_message() if $print_help_message;
 ####################################################
 
 ### no credentials are needed for this client since connects directly to PG
+our %credentials= ();
+
+our $root_dir;
+our $root_pg_dir;
+our $root_webwork2_dir;
+
+BEGIN {
+
+
+	#Define the OpaqueServer static variables
+	my $topDir = $WeBWorK::Constants::WEBWORK_DIRECTORY;
+	$topDir =~ s|webwork2?$||;   # remove webwork2 link
+	$root_dir = "$topDir/ww_opaque_server";
+	$root_pg_dir = "$topDir/pg";
+	$WeBWorK::Constants::PG_DIRECTORY = $root_pg_dir;
+	$root_webwork2_dir = "$topDir/webwork2";
+	eval "use lib '$root_pg_dir/lib'"; die $@ if $@;
+	eval "use lib '$root_webwork2_dir/lib'"; die $@ if $@;
+} # END BEGIN
+
+	our $hostname = 'http://localhost';
+	our $courseName = 'gage_course';
+	our $rpc_url = '/opaqueserver_rpc';
+	
+# 	my $files_url = '/opaqueserver_files';
+# 	my $wsdl_url = '/opaqueserver_wsdl';
+# 
+	
+	# Find the library directories for 
+	# ww_opaque_server, pg and webwork2
+	# and place them in the search path for modules
+
+
+
+
+
+our $seed_ce = create_course_environment();
+my $dbLayout = $seed_ce->{dbLayout};	
+our $db = WeBWorK::DB->new($dbLayout);
+# FIXME -- can we create minimal local versions of $seed_ce and $db so that no modules from 
+# webwork2/lib are required? only objects from pg/lib
+
+
+
+
+
+#allow credentials to overrride the default displayMode and the browser display
+our $HTML_DISPLAY_COMMAND = HTML_DISPLAY_COMMAND();
+our $HASH_DISPLAY_COMMAND = HASH_DISPLAY_COMMAND();
+our $DISPLAYMODE          = DISPLAYMODE();
+our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
+our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
+
+
+
+$path_to_log_file         = $path_to_log_file ||$credentials{path_to_log_file}||LOG_FILE();  #set log file path.
+
+eval { # attempt to create log file
+	local(*FH);
+	open(FH, '>>',$path_to_log_file) or die "Can't open file $path_to_log_file for writing";
+	close(FH);	
+};
+
+die "You must first create an output file at $path_to_log_file
+     with permissions 777 " unless -w $path_to_log_file;
 
 ##################################################
 #  END gathering credentials for client
@@ -314,76 +402,6 @@ print_help_message() if $print_help_message;
 ###################################
 # Build  client defaults
 ###################################
-
-BEGIN {
-	my $hostname = 'http://localhost';
-	my $courseName = 'gage_course';
-
-	#Define the OpaqueServer static variables
-	my $topDir = $WeBWorK::Constants::WEBWORK_DIRECTORY;
-	$topDir =~ s|webwork2?$||;   # remove webwork2 link
-	my $root_dir = "$topDir/ww_opaque_server";
-	my $root_pg_dir = "$topDir/pg";
-	$WeBWorK::Constants::PG_DIRECTORY = $root_pg_dir;
-	my $root_webwork2_dir = "$topDir/webwork2";
-
-	my $rpc_url = '/opaqueserver_rpc';
-	my $files_url = '/opaqueserver_files';
-	my $wsdl_url = '/opaqueserver_wsdl';
-
-	
-	# Find the library directories for 
-	# ww_opaque_server, pg and webwork2
-	# and place them in the search path for modules
-
-	eval "use lib '$root_dir/lib'"; die $@ if $@;
-	eval "use lib '$root_pg_dir/lib'"; die $@ if $@;
-	eval "use lib '$root_webwork2_dir/lib'"; die $@ if $@;
-
-	############################################
-	# Define basic urls and the paths to basic directories, 
-	############################################
-	$OpaqueServer::TopDir = $topDir;   #/opt/webwork/
-	$OpaqueServer::Host = $hostname;
-	$OpaqueServer::RootDir = $root_dir;
-	$OpaqueServer::RootPGDir = $root_pg_dir;
-	$OpaqueServer::RootWebwork2Dir = $root_webwork2_dir;
-	$OpaqueServer::RPCURL = $rpc_url;
-	$OpaqueServer::WSDLURL = $wsdl_url;
-
-	$OpaqueServer::FilesURL = $files_url;
-	$OpaqueServer::courseName = $courseName;
-
-	# suppress warning messages
-	my $foo = $OpaqueServer::TopDir; 
-	$foo = $OpaqueServer::RootDir;
-	$foo = $OpaqueServer::Host;
-	$foo = $OpaqueServer::WSDLURL;
-	$foo = $OpaqueServer::FilesURL;
-	$foo ='';
-} # END BEGIN
-
-our $seed_ce = create_course_environment();
-my $dbLayout = $seed_ce->{dbLayout};	
-our $db = WeBWorK::DB->new($dbLayout);
-# FIXME -- can we create minimal local versions of $seed_ce and $db so that no modules from 
-# webwork2/lib are required? only objects from pg/lib
-
-###################################
-# END build  client defaults
-###################################
-
-#allow credentials to overrride the default displayMode and the browser display
-our $HTML_DISPLAY_COMMAND = HTML_DISPLAY_COMMAND();
-our $DISPLAYMODE          = DISPLAYMODE();
-our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
-our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
-
-##################################################
-#  END gathering credentials for client
-##################################################
-
-
 ##################################################
 #  set default inputs for the problem
 ##################################################
@@ -465,6 +483,7 @@ sub wanted {
 #######################################################################
 # Process the pg file
 #######################################################################
+
 sub process_pg_file {
 	my $file_path = shift;
 	my $NO_ERRORS = "";
@@ -572,8 +591,10 @@ sub process_pg_file {
 				   WWcorrectAns          => 1, # show correct answers
 				   %correct_answers
 				};
-	($error_flag, $formatter, $error_string)=();
+
 	my $pg_start = time; # this is Time::HiRes's time, which gives floating point values
+
+	($error_flag, $formatter, $error_string)=();
 	($error_flag, $formatter, $error_string) = 
 			process_problem($file_path, $default_input, $form_data2);
 	my $pg_stop = time;
@@ -592,38 +613,44 @@ sub process_pg_file {
 #######################################################################
 # Auxiliary subroutines
 #######################################################################
-
-
-
 sub process_problem {
 	my $file_path = shift;
 	my $input    = shift;
 	my $form_data  = shift;
 	# %credentials is global
 	my $problemSeed = $form_data->{problemSeed};
+	die "problem seed not defined in sendXMLRPC::process_problem" unless $problemSeed;
 	my $displayMode = $form_data->{displayMode};
 	my $inputs_ref = {%$input, %$form_data};
+
+	$form_data->{showAnsGroupInfo} 		= $print_answer_group;
+	$form_data->{showAnsHashInfo}       = $print_answer_hash;
+	$form_data->{showPGInfo}	        = $print_pg_hash;
+	$form_data->{showResourceInfo}	    = $print_resource_hash;
 	
 	### get source and correct file_path name so that it is relative to templates directory
 	my ($adj_file_path, $source) = get_source($file_path);
 	#print "find file at $adj_file_path ", length($source), "\n";
 
-	#######################################################################
-	# Process the pg file
-	#######################################################################
 	
-	$form_data->{showAnsGroupInfo} 		= $print_answer_group;
-	$form_data->{showAnsHashInfo}       = $print_answer_hash;
-	$form_data->{showPGInfo}	        = $print_pg_hash;
+	##################################################
+	# Process the pg file
+	##################################################
+	### store the time before we invoke the content generator
+	my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
+
 
 	our($return_object, $error_flag, $error_string);
 	$error_flag=0; $error_string='';    
 	# the call to standaloneRenderer destroys $input and $form_data for some reason
 	$return_object = standaloneRenderer(\$source, $input,$form_data); # PGcore object
+
+	#######################################################################
+	# Handle errors
+	#######################################################################
+	
 	print "\n\n Result of renderProblem \n\n" if $UNIT_TESTS_ON;
-#	print pretty_print_rh($result) if $UNIT_TESTS_ON;
-#	print "keys in result ", join(" ", sort keys %$return_object), "\n" if $UNIT_TESTS_ON;
-#	print "keys in pgcore ", join(" ", sort keys %{$return_object->{pgcore}}), "\n" if $UNIT_TESTS_ON;
+	print pretty_print_rh($return_object) if $UNIT_TESTS_ON;
 	if (not defined $return_object) {  #FIXME make sure this is the right error message if site is unavailable
 		$error_string = "0\t Could not process $file_path problem file \n";
 	} elsif (defined($return_object->{flags}->{error_flag}) and $return_object->{flags}->{error_flag} ) {
@@ -645,6 +672,18 @@ sub process_problem {
 		course_password  =>  'daemon', 
 		inputs_ref       =>  $inputs_ref,
 	);
+	##################################################
+	# log elapsed time
+	##################################################
+	my $scriptName = 'standalonePGproblemRenderer';
+	my $cg_end = time;
+	my $cg_duration = $cg_end - $cg_start;
+	WebworkClient::writeRenderLogEntry("", "{script:$scriptName; file:$file_path; ". sprintf("duration: %.3f sec;", $cg_duration)." }",'');
+	
+	#######################################################################
+	# End processing of the pg file
+	#######################################################################
+	
 	return $error_flag, $formatter, $error_string;
 }
 
@@ -731,16 +770,16 @@ sub display_ans_output {  # print the collection of answer hashes to the command
 	$file_name =~ s/\.\w+$/\.txt/;    # replace extension with html
 	my $output_file = TEMPOUTPUTDIR().$file_name;
 	my $output_text = pretty_print_rh($return_object->{answers});
-	local(*FH);
-	open(FH, '>', $output_file) or die "Can't open file $output_file writing";
-	print FH $output_text;
-	close(FH);
-
-	system(HASH_DISPLAY_COMMAND().$output_file."; rm $output_file;");
-	sleep 1; #wait 1 seconds
-	unlink($output_file);
+	print STDOUT $output_text;
+# 	local(*FH);
+# 	open(FH, '>', $output_file) or die "Can't open file $output_file writing";
+# 	print FH $output_text;
+# 	close(FH);
+# 
+# 	system(HASH_DISPLAY_COMMAND().$output_file."; rm $output_file;");
+# 	sleep 1; #wait 1 seconds
+# 	unlink($output_file);
 }
-
 
 sub record_problem_ok1 {
 	my $error_flag = shift//'';
@@ -780,7 +819,7 @@ sub record_problem_ok1 {
 	}
 	 
 	local(*FH);
-	open(FH, '>>',LOG_FILE()) or die "Can't open file ".LOG_FILE()." for writing";
+	open(FH, '>>',$path_to_log_file) or die "Can't open file $path_to_log_file for writing";
 	print FH $return_string;
 	close(FH);
 	return $SHORT_RETURN_STRING;
@@ -800,11 +839,11 @@ sub record_problem_ok2 {
 			      $return_object->{answers}->{$ans}->{score};
 			$all_correct =$all_correct && $scores{$ans};
 		}
-	$all_correct = "2" if $some_correct_answers_not_specified;
-	$ALL_CORRECT = ($all_correct == 1)?'All answers correct':'Some answers are incorrect';
+	$all_correct = ".5" if $some_correct_answers_not_specified;
+	$ALL_CORRECT = ($all_correct == 1)?'All answers are correct':'Some answers are incorrect';
 	local(*FH);
-	open(FH, '>>',LOG_FILE()) or die "Can't open file ".LOG_FILE()." for writing";
-	print FH "$all_correct Answers for $file_path are all correct = $all_correct; errors: $error_flag standalone_time: $pg_duration\n";
+	open(FH, '>>',$path_to_log_file) or die "Can't open file $path_to_log_file for writing";
+	print FH "$all_correct $file_path\n"; #  do we need this? compile_errors=$error_flag\n";
 	close(FH);
 	return $ALL_CORRECT;
 }
@@ -921,12 +960,12 @@ sub  standaloneRenderer {
 
 sub create_course_environment {
 	my $seed_ce = WeBWorK::CourseEnvironment->new( 
-				{webwork_dir		=>		$OpaqueServer::RootWebwork2Dir, 
-				 courseName         =>      $OpaqueServer::courseName,
-				 webworkURL         =>      $OpaqueServer::RPCURL,
-				 pg_dir             =>      $OpaqueServer::RootPGDir,
+				{webwork_dir		=>		$root_webwork2_dir, 
+				 courseName         =>      $courseName,
+				 webworkURL         =>      $rpc_url,
+				 pg_dir             =>      $root_pg_dir,
 				 });
-	warn "Unable to find environment for course: |$OpaqueServer::courseName|" unless ref($seed_ce);
+	warn "Unable to find environment for course: |$courseName|" unless ref($seed_ce);
 	return ($seed_ce);
 }
 #######################################################################
@@ -1080,7 +1119,7 @@ DETAILS
                 Same as -b but renders the question with the correct answers submitted.
 
     -h
-                Prints to the command line the entire object returned by 
+                Prints to STDOUT the entire object returned by 
                    the webwork_client xmlrpc request.
                    This includes the answer information displayed by -a and -A and much more.
 
@@ -1113,6 +1152,12 @@ DETAILS
 				Process question in TeX mode and output to the command line
 
                 The single letter options can be "bundled" e.g.  -vcCbB
+                
+	--list   pg_list
+				Read and process a list of .pg files contained in the file C<pg_list>.  C<pg_list>
+				consists of a sequence of lines each of which contains the full path to a pg
+				file that should be processed. (For example this might be the output from an
+				earlier run of sendXMLRPC using the -c flag. )
 
     --pg
                 Triggers the printing of the all of the variables available to the PG question. 
@@ -1128,12 +1173,20 @@ DETAILS
                 Prints the PGanswergroup for each answer evaluator. The information appears in 
                 the PG_debug output which follows the question content.  Use in conjunction with -b or -B.
                 This contains more information than printing the answer hash. (perhaps too much).
+	
+	--resource
+
+	Prints the resources used by the question. The information appears in 
+    the PG_debug output which follows the question content.  Use in conjunction with -b or -B.
 
     --credentials=s
                 Specifies a file s where the  credential information can be found.
 
-    --help
-               Prints help information.
+	--help
+		   Prints help information. 
+	   
+	--log 
+		   Sets path to log file
 
 
 EOT
