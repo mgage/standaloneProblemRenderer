@@ -214,6 +214,8 @@ $Carp::Verbose = 1;
 #use Crypt::SSLeay;  # not needed
 use WebworkClient;
 use FormatRenderedProblem;
+# use Memory::Usage; -- not clear this works
+use Proc::ProcessTable;
 use Time::HiRes qw/time/;
 use MIME::Base64 qw( encode_base64 decode_base64);
 use Getopt::Long qw[:config no_ignore_case bundling];
@@ -424,7 +426,6 @@ my $default_form_data = {
 ##################################################
 #  MAIN SECTION gather and process problem template files
 ##################################################
-my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
 
 our @files_and_directories = @ARGV;
 # print "files ", join("|", @files_and_directories), "\n";
@@ -636,15 +637,14 @@ sub process_problem {
 	##################################################
 	# Process the pg file
 	##################################################
-	### store the time before we invoke the content generator
-	my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
-
 
 	our($return_object, $error_flag, $error_string);
 	$error_flag=0; $error_string='';    
 	# the call to standaloneRenderer destroys $input and $form_data for some reason
+	
+	my $memory_use_start = get_current_process_memory();
+	my $cg_start =time;   #start timing of rendering and formatting of problem
 	$return_object = standaloneRenderer(\$source, $input,$form_data); # PGcore object
-
 	#######################################################################
 	# Handle errors
 	#######################################################################
@@ -673,12 +673,14 @@ sub process_problem {
 		inputs_ref       =>  $inputs_ref,
 	);
 	##################################################
-	# log elapsed time
+	# log elapsed time for rendering and formatting the result in html format
 	##################################################
 	my $scriptName = 'standalonePGproblemRenderer';
 	my $cg_end = time;
 	my $cg_duration = $cg_end - $cg_start;
-	WebworkClient::writeRenderLogEntry("", "{script:$scriptName; file:$file_path; ". sprintf("duration: %.3f sec;", $cg_duration)." }",'');
+	my $memory_use_end = get_current_process_memory();
+	my $memory_use = $memory_use_end - $memory_use_start;
+	WebworkClient::writeRenderLogEntry("", "{script:$scriptName; file:$file_path; ". sprintf("duration: %.3f sec;", $cg_duration). sprintf(" memory: %6d bytes;", $memory_use).   "}",'');
 	
 	#######################################################################
 	# End processing of the pg file
@@ -954,7 +956,7 @@ sub  standaloneRenderer {
 		internal_debug_messages     => $internal_debug_messages,
 	};
 	print"\n pg answers ", join(" ",  %{$pg->{answers}} ) if $UNIT_TESTS_ON;
-
+	$pg->free;
 	$out2;
 }
 
@@ -971,15 +973,28 @@ sub create_course_environment {
 #######################################################################
 # Auxiliary subroutines
 #######################################################################
+####################################################################################
+# Check process memory
+####################################################################################
+
+
+sub get_current_process_memory {
+  state $pt = Proc::ProcessTable->new;
+  my %info = map { $_->pid => $_ } @{$pt->table};
+  return $info{$$}->rss;
+}
 
 ####################################################################################
 # Write logs -- to replace subroutine from WebworkClient
+# this is for when we try to reduce the dependence on WebworkClient
 ####################################################################################
 
 sub writeRenderLogEntry($$$) {
 	my ($function, $details, $beginEnd) = @_;
 	$beginEnd = ($beginEnd eq "begin") ? ">" : ($beginEnd eq "end") ? "<" : "-";
 #	WeBWorK::Utils::writeLog(, "render_timing", "$$ ".time." $beginEnd $function [$details]");
+#	WebworkClient::writeRenderLogEntry("", "{script:$scriptName; file:$file_path; ". sprintf("duration: %.3f sec;", $cg_duration)." url: $credentials{site_url}; }",'');
+	
 }
 
 
