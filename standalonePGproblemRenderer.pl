@@ -2,7 +2,7 @@
 
 ################################################################################
 # WeBWorK Online Homework Delivery System
-# Copyright © 2000-2016 The WeBWorK Project, http://openwebwork.sf.net/
+# Copyright © 2000-2017 The WeBWorK Project, http://openwebwork.sf.net/
 # 
 # This program is free software; you can redistribute it and/or modify it under
 # the terms of either: (a) the GNU General Public License as published by the
@@ -208,20 +208,23 @@ BEGIN {
 
 use lib "$WeBWorK::Constants::WEBWORK_DIRECTORY/lib";
 use lib "$WeBWorK::Constants::PG_DIRECTORY/lib";
-use 5.10.0;
-$Carp::Verbose = 1;
-
-#use Crypt::SSLeay;  # not needed
-use WebworkClient;
-use FormatRenderedProblem;
-# use Memory::Usage; -- not clear this works
-use Proc::ProcessTable;
+use Carp;
+use Crypt::SSLeay;  # needed for https
 use Time::HiRes qw/time/;
 use MIME::Base64 qw( encode_base64 decode_base64);
 use Getopt::Long qw[:config no_ignore_case bundling];
 use File::Find;
 use FileHandle;
 use Cwd 'abs_path';
+use WebworkClient;
+use FormatRenderedProblem;
+use Proc::ProcessTable; 
+
+use 5.10.0;
+$Carp::Verbose = 1;
+
+###################
+# Constants needed to actually render the pg question
 ##################
 use WeBWorK::DB;
 use WeBWorK::PG; 
@@ -385,8 +388,11 @@ our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
 our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
 
 
+##################################################
+#  END -- No credentials needed for standalone rendering
+##################################################
 
-$path_to_log_file         = $path_to_log_file ||$credentials{path_to_log_file}||LOG_FILE();  #set log file path.
+$path_to_log_file         = $path_to_log_file//LOG_FILE();  #set log file path.
 
 eval { # attempt to create log file
 	local(*FH);
@@ -398,15 +404,12 @@ die "You must first create an output file at $path_to_log_file
      with permissions 777 " unless -w $path_to_log_file;
 
 ##################################################
-#  END gathering credentials for client
-##################################################
-
-###################################
-# Build  client defaults
-###################################
-##################################################
 #  set default inputs for the problem
 ##################################################
+
+############################################
+# Build  PG question defaults
+############################################
 
 my $default_input = {
 
@@ -426,6 +429,7 @@ my $default_form_data = {
 ##################################################
 #  MAIN SECTION gather and process problem template files
 ##################################################
+my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
 
 our @files_and_directories = @ARGV;
 # print "files ", join("|", @files_and_directories), "\n";
@@ -527,8 +531,14 @@ sub process_pg_file {
 		my $ans_obj = $formatter->return_object->{answers}->{$ans_id};
 		# the answergrps are in PG_ANSWERS_HASH
 		my $answergroup = $formatter->return_object->{PG_ANSWERS_HASH}->{$ans_id};
-		my @response_order = @{$answergroup->{response}->{response_order}};
-		#print scalar(@response_order), " first response $response_order[0] $ans_id\n";
+		say "responsecontents: ", join(" ", keys %{$answergroup->{response}});
+		
+		my @response_order = ();  # hack in case response order doesn't exist?
+		@response_order = @{$answergroup->{response}->{response_order}}
+		     if defined($answergroup->{response}->{response_order});
+		print scalar(@response_order), " first response $response_order[0] $ans_id\n";
+		
+		
 		$ans_obj->{type} = $ans_obj->{type}//'';  #make sure it's defined.
 		if ($ans_obj->{type} eq 'MultiAnswer') { 
 		    # singleResponse multianswer type
@@ -584,6 +594,11 @@ sub process_pg_file {
 		}
 
 	} #end loop collecting correct answers. 
+	
+	print "display the correct answers here";
+	display_inputs(%correct_answers) if $verbose;  # choice of correct answers submitted 
+	# should this information on what answers are being submitted have an option switch?
+
 	# adjust input and reinitialize form_data
 	my $form_data2 = { %$default_form_data,
 				   problemSeed => $problemSeed1,
@@ -592,7 +607,7 @@ sub process_pg_file {
 				   WWcorrectAns          => 1, # show correct answers
 				   %correct_answers
 				};
-
+  
 	my $pg_start = time; # this is Time::HiRes's time, which gives floating point values
 
 	($error_flag, $formatter, $error_string)=();
@@ -605,6 +620,7 @@ sub process_pg_file {
 	display_hash_output($file_path, $formatter) if $display_hash_output2;
 	display_ans_output($file_path, $formatter) if $display_ans_output2;
 	$ALL_CORRECT = record_problem_ok2($error_flag, $formatter, $file_path, $some_correct_answers_not_specified, $pg_duration) if $record_ok2;      
+	print "display the correct answers here";
 	display_inputs(%correct_answers) if $verbose;  # choice of correct answers submitted 
 	# should this information on what answers are being submitted have an option switch?
 
@@ -614,6 +630,7 @@ sub process_pg_file {
 #######################################################################
 # Auxiliary subroutines
 #######################################################################
+
 sub process_problem {
 	my $file_path = shift;
 	my $input    = shift;
@@ -637,13 +654,14 @@ sub process_problem {
 	##################################################
 	# Process the pg file
 	##################################################
+	### store the time before we invoke the content generator
+	my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
 
 	our($return_object, $error_flag, $error_string);
 	$error_flag=0; $error_string='';    
 	# the call to standaloneRenderer destroys $input and $form_data for some reason
 	
 	my $memory_use_start = get_current_process_memory();
-	my $cg_start =time;   #start timing of rendering and formatting of problem
 	$return_object = standaloneRenderer(\$source, $input,$form_data); # PGcore object
 	#######################################################################
 	# Handle errors
@@ -673,7 +691,7 @@ sub process_problem {
 		inputs_ref       =>  $inputs_ref,
 	);
 	##################################################
-	# log elapsed time for rendering and formatting the result in html format
+	# log elapsed time
 	##################################################
 	my $scriptName = 'standalonePGproblemRenderer';
 	my $cg_end = time;
@@ -721,6 +739,7 @@ sub display_tex_output {
 #	unlink($output_file);
 
 }
+
 sub	display_html_output {  #display the problem in a browser
 	my $file_path = shift;
 	my $xmlrpc_client = shift;
@@ -782,6 +801,7 @@ sub display_ans_output {  # print the collection of answer hashes to the command
 # 	sleep 1; #wait 1 seconds
 # 	unlink($output_file);
 }
+
 
 sub record_problem_ok1 {
 	my $error_flag = shift//'';
@@ -848,17 +868,6 @@ sub record_problem_ok2 {
 	print FH "$all_correct $file_path\n"; #  do we need this? compile_errors=$error_flag\n";
 	close(FH);
 	return $ALL_CORRECT;
-}
-
-sub display_inputs {
-	my %correct_answers = @_;
-	foreach my $key (sort keys %correct_answers) {
-		print "$key => $correct_answers{$key}\n";
-	}
-}
-sub edit_source_file {
-	my $file_path = shift;
-	system(EDIT_COMMAND()." $file_path");
 }
 
 
@@ -960,6 +969,23 @@ sub  standaloneRenderer {
 	$out2;
 }
 
+##################################################
+# utilities
+##################################################
+
+sub display_inputs {
+	my %correct_answers = @_;
+	foreach my $key (sort keys %correct_answers) {
+		print "$key => $correct_answers{$key}\n";
+	}
+}
+sub edit_source_file {
+	my $file_path = shift;
+	system(EDIT_COMMAND()." $file_path");
+}
+
+
+
 sub create_course_environment {
 	my $seed_ce = WeBWorK::CourseEnvironment->new( 
 				{webwork_dir		=>		$root_webwork2_dir, 
@@ -1028,9 +1054,6 @@ sub get_source {
 }
 
 
-##################################################
-# utilities
-##################################################
 
 sub pretty_print_rh { 
     shift if UNIVERSAL::isa($_[0] => __PACKAGE__);
@@ -1073,6 +1096,9 @@ sub pretty_print_rh {
 	return $out." ";
 }
 
+############################################
+# Help message
+############################################
 
 sub print_help_message {
 print <<'EOT';
@@ -1163,11 +1189,12 @@ DETAILS
     -e
 				Open the source file in an editor. 
 
-	--tex    
-				Process question in TeX mode and output to the command line
-
+	
                 The single letter options can be "bundled" e.g.  -vcCbB
-                
+   
+   	--tex    
+				Process question in TeX mode and output to the command line
+             
 	--list   pg_list
 				Read and process a list of .pg files contained in the file C<pg_list>.  C<pg_list>
 				consists of a sequence of lines each of which contains the full path to a pg
