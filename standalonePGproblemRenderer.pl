@@ -216,7 +216,7 @@ use Getopt::Long qw[:config no_ignore_case bundling];
 use File::Find;
 use FileHandle;
 use Cwd 'abs_path';
-use WebworkClient;
+use WebworkClient qw(writeRenderLogEntry);
 use FormatRenderedProblem;
 use Proc::ProcessTable; 
 
@@ -226,9 +226,11 @@ $Carp::Verbose = 1;
 ###################
 # Constants needed to actually render the pg question
 ##################
-use WeBWorK::DB;
-use WeBWorK::PG; 
+use WeBWorK::DB; #webwork2 (use to create fake sets, problems and users)
+use WeBWorK::PG; #webwork2 (use to set up environment)
 use WeBWorK::Utils::Tasks qw(fake_set fake_problem fake_user);   # may not be needed --only a few aspects of this class used??
+
+# the remainder are all in the PG directory
 use WeBWorK::PG::ImageGenerator; 
 use PGUtil qw(pretty_print not_null);
 use constant fakeSetName => "Undefined_Set";
@@ -242,7 +244,7 @@ use vars qw($courseName);
 
 ### verbose output when UNIT_TESTS_ON =1;
  our $UNIT_TESTS_ON             = 0;
-  
+
 #Default display commands.
 use constant  HTML_DISPLAY_COMMAND  => "open -a 'Google Chrome' "; # (MacOS command)
 use constant  HASH_DISPLAY_COMMAND => "";   # display tempoutputfile to STDOUT
@@ -253,7 +255,8 @@ use constant  HASH_DISPLAY_COMMAND => "";   # display tempoutputfile to STDOUT
      " writeable " unless -w TEMPOUTPUTDIR();
  use constant TEMPOUTPUTFILE  => TEMPOUTPUTDIR()."temporary_output.html";
     
-### Default path to a temporary file for storing the output of standalonePGproblemRenderer.pl
+### Default path to a temporary file for storing the output 
+### of standalonePGproblemRenderer.pl
 use constant LOG_FILE => "$ENV{WEBWORK_ROOT}/DATA/standalone_results.log";
 
 ### Command for editing the pg source file in the browswer
@@ -333,8 +336,34 @@ print_help_message() if $print_help_message;
 # get credentials
 ####################################################
 
-### no credentials are needed for this client since connects directly to PG
-our %credentials= ();
+# no credentials are needed for this client since connects directly to PG
+# our %credentials= ();
+
+
+
+# credentials file location -- no credentials needed for the standalone version.
+
+
+
+
+
+
+#allow credentials to overrride the default displayMode 
+#and the browser display -- credentials not used in standalonePGproblemRenderer
+our $HTML_DISPLAY_COMMAND = HTML_DISPLAY_COMMAND();
+our $HASH_DISPLAY_COMMAND = HASH_DISPLAY_COMMAND();
+our $DISPLAYMODE          = DISPLAYMODE();
+our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
+our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
+
+
+##################################################
+#  END gathering credentials -- No credentials needed for standalone rendering
+##################################################
+
+##################################################
+# create course environment and create log files
+##################################################
 
 our $root_dir;
 our $root_pg_dir;
@@ -366,31 +395,12 @@ BEGIN {
 	# ww_opaque_server, pg and webwork2
 	# and place them in the search path for modules
 
-
-
-
-
 our $seed_ce = create_course_environment();
 my $dbLayout = $seed_ce->{dbLayout};	
 our $db = WeBWorK::DB->new($dbLayout);
 # FIXME -- can we create minimal local versions of $seed_ce and $db so that no modules from 
 # webwork2/lib are required? only objects from pg/lib
 
-
-
-
-
-#allow credentials to overrride the default displayMode and the browser display
-our $HTML_DISPLAY_COMMAND = HTML_DISPLAY_COMMAND();
-our $HASH_DISPLAY_COMMAND = HASH_DISPLAY_COMMAND();
-our $DISPLAYMODE          = DISPLAYMODE();
-our $TEX_DISPLAY_COMMAND  = TEX_DISPLAY_COMMAND();
-our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
-
-
-##################################################
-#  END -- No credentials needed for standalone rendering
-##################################################
 
 $path_to_log_file         = $path_to_log_file//LOG_FILE();  #set log file path.
 
@@ -403,13 +413,16 @@ eval { # attempt to create log file
 die "You must first create an output file at $path_to_log_file
      with permissions 777 " unless -w $path_to_log_file;
 
+
 ##################################################
 #  set default inputs for the problem
 ##################################################
 
+
 ############################################
 # Build  PG question defaults
 ############################################
+ 
 
 my $default_input = {
 
@@ -423,7 +436,7 @@ my $default_form_data = {
 };
 
 ##################################################
-#  end build client
+#  end PG question defaults
 ##################################################
 
 ##################################################
@@ -530,13 +543,11 @@ sub process_pg_file {
 	foreach my $ans_id (keys %{$formatter->return_object->{answers}} ) {
 		my $ans_obj = $formatter->return_object->{answers}->{$ans_id};
 		# the answergrps are in PG_ANSWERS_HASH
-		my $answergroup = $formatter->return_object->{PG_ANSWERS_HASH}->{$ans_id};
-		say "responsecontents: ", join(" ", keys %{$answergroup->{response}});
-		
-		my @response_order = ();  # hack in case response order doesn't exist?
-		@response_order = @{$answergroup->{response}->{response_order}}
+		my $answergroup = $formatter->return_object->{PG_ANSWERS_HASH}->{$ans_id};	
+		my @response_order = @{$answergroup->{response}->{response_order}}
 		     if defined($answergroup->{response}->{response_order});
-		print scalar(@response_order), " first response $response_order[0] $ans_id\n";
+		@response_order=@response_order//(); #hack to ensure this is defined.
+		# print scalar(@response_order), " first response $response_order[0] $ans_id\n";
 		
 		
 		$ans_obj->{type} = $ans_obj->{type}//'';  #make sure it's defined.
@@ -580,7 +591,9 @@ sub process_pg_file {
 					$correct_answers{$response_id} = shift @ans_array;
 				}
 			} else {
-				warn "responding to an answer evaluator of type |".$ans_obj->{type}. "|  with ".scalar(@response_order)." ans_blanks: ", join(" ",@response_order),"\n";
+				warn "responding to an answer evaluator of type |".$ans_obj->{type}. 
+				  "|  with ".scalar(@response_order)." ans_blanks: ", 
+				   join(" ",@response_order),"\n" if $UNIT_TESTS_ON;
 				$correct_answers{$ans_id}=($ans_obj->{correct_ans})//($ans_obj->{correct_value})//'';
 			}
 		}
@@ -595,7 +608,7 @@ sub process_pg_file {
 
 	} #end loop collecting correct answers. 
 	
-	print "display the correct answers here";
+	say "display the correct answers here" if $verbose;
 	display_inputs(%correct_answers) if $verbose;  # choice of correct answers submitted 
 	# should this information on what answers are being submitted have an option switch?
 
@@ -607,7 +620,7 @@ sub process_pg_file {
 				   WWcorrectAns          => 1, # show correct answers
 				   %correct_answers
 				};
-  
+
 	my $pg_start = time; # this is Time::HiRes's time, which gives floating point values
 
 	($error_flag, $formatter, $error_string)=();
@@ -636,33 +649,50 @@ sub process_problem {
 	my $input    = shift;
 	my $form_data  = shift;
 	# %credentials is global
+
+	### get source and correct file_path name so that it is relative to templates directory
+
+	my ($adj_file_path, $source) = get_source($file_path);
+	#print "find file at $adj_file_path ", length($source), "\n";
+
+
+	### update inputs
 	my $problemSeed = $form_data->{problemSeed};
-	die "problem seed not defined in sendXMLRPC::process_problem" unless $problemSeed;
+	die "problem seed not defined in standAlonePGproblemRenderer::process_problem" unless $problemSeed;
+
 	my $displayMode = $form_data->{displayMode};
 	my $inputs_ref = {%$input, %$form_data};
+	$inputs_ref->{envir}{fileName} = $adj_file_path;
+	$inputs_ref->{envir}{probFileName} = $adj_file_path;
+	$inputs_ref->{envir}{sourceFilePath} = $adj_file_path;
+	$inputs_ref->{envir}{problemSeed} = $problemSeed;
+
+	
 
 	$form_data->{showAnsGroupInfo} 		= $print_answer_group;
 	$form_data->{showAnsHashInfo}       = $print_answer_hash;
 	$form_data->{showPGInfo}	        = $print_pg_hash;
 	$form_data->{showResourceInfo}	    = $print_resource_hash;
 	
-	### get source and correct file_path name so that it is relative to templates directory
-	my ($adj_file_path, $source) = get_source($file_path);
-	#print "find file at $adj_file_path ", length($source), "\n";
 
-	
+
 	##################################################
 	# Process the pg file
 	##################################################
 	### store the time before we invoke the content generator
 	my $cg_start = time; # this is Time::HiRes's time, which gives floating point values
 
+	############################################
+	# Submit through subroutine standaloneRenderer to render problem
+	############################################
+	
 	our($return_object, $error_flag, $error_string);
 	$error_flag=0; $error_string='';    
-	# the call to standaloneRenderer destroys $input and $form_data for some reason
 	
 	my $memory_use_start = get_current_process_memory();
 	$return_object = standaloneRenderer(\$source, $input,$form_data); # PGcore object
+	# the call to standaloneRenderer destroys $input and $form_data for some reason
+	
 	#######################################################################
 	# Handle errors
 	#######################################################################
@@ -677,6 +707,12 @@ sub process_problem {
 		$error_string = "0\t $file_path has syntax errors\n";
 	}
 	$error_flag=1 if $return_object->{errors};
+	
+	
+##################################################
+# Create FormatRenderedProblems object	
+##################################################
+
 	#my $encoded_source = encode_base64($source); # create encoding of source_file;
 	my $formatter = FormatRenderedProblem->new(
 		return_object    => $return_object,
@@ -698,7 +734,10 @@ sub process_problem {
 	my $cg_duration = $cg_end - $cg_start;
 	my $memory_use_end = get_current_process_memory();
 	my $memory_use = $memory_use_end - $memory_use_start;
-	WebworkClient::writeRenderLogEntry("", "{script:$scriptName; file:$file_path; ". sprintf("duration: %.3f sec;", $cg_duration). sprintf(" memory: %6d bytes;", $memory_use).   "}",'');
+	WebworkClient::writeRenderLogEntry("", 
+	"{script:$scriptName; file:$file_path; ".
+	 sprintf("duration: %.3f sec;", $cg_duration).
+	 sprintf(" memory: %6d bytes;", $memory_use).   "}",'');
 	
 	#######################################################################
 	# End processing of the pg file
@@ -709,8 +748,8 @@ sub process_problem {
 
 sub display_tex_output {
 	my $file_path = shift;
-	my $xmlrpc_client = shift;
-	my $output_text = $xmlrpc_client->formatRenderedProblem;
+	my $formatter = shift;
+	my $output_text = $formatter->formatRenderedProblem;
 	$file_path =~s|/$||;   # remove final /
 	$file_path =~ m|/?([^/]+)$|;
 	my $file_name = $1;
@@ -720,7 +759,7 @@ sub display_tex_output {
 	open(FH, '>', $output_file) or die "Can't open file $output_file for writing";
 	print FH $output_text;
 	close(FH);
-	print "tex result to $output_file\n";
+	print "tex result sent to $output_file\n" if $UNIT_TESTS_ON;
 	if ($display_pdf_output) {
 		print "pdf mode\n";
 		my $pdf_file_name = $file_name;
@@ -742,8 +781,8 @@ sub display_tex_output {
 
 sub	display_html_output {  #display the problem in a browser
 	my $file_path = shift;
-	my $xmlrpc_client = shift;
-	my $output_text = $xmlrpc_client->formatRenderedProblem;
+	my $formatter = shift;
+	my $output_text = $formatter->formatRenderedProblem;
 	$file_path =~s|/$||;   # remove final /
 	$file_path =~ m|/?([^/]+)$|;
 	my $file_name = $1;
@@ -759,7 +798,7 @@ sub	display_html_output {  #display the problem in a browser
 	unlink($output_file);
 }
 
-sub display_hash_output {   # print the entire hash output to the command line	
+sub display_hash_output {   # print the entire hash output to the command line
 	my $file_path = shift;
 	my $formatter = shift;
 	my $output_text = $formatter->formatRenderedProblem;
@@ -783,8 +822,8 @@ sub display_hash_output {   # print the entire hash output to the command line
 
 sub display_ans_output {  # print the collection of answer hashes to the command line
 	my $file_path = shift;
-	my $xmlrpc_client = shift;
-	my $return_object = $xmlrpc_client->return_object;	
+	my $formatter = shift;
+	my $return_object = $formatter->return_object;	
 	$file_path =~s|/$||;   # remove final /
 	$file_path =~ m|/?([^/]+)$|;
 	my $file_name = $1;
@@ -805,14 +844,12 @@ sub display_ans_output {  # print the collection of answer hashes to the command
 
 sub record_problem_ok1 {
 	my $error_flag = shift//'';
-	my $xmlrpc_client = shift;  # for formatting
+	my $formatter = shift;  # for formatting
 	my $file_path = shift;
 	my $return_string = '';
-	my $return_object = $xmlrpc_client->return_object;
-
-	my $result = $return_object;
-	if (defined($result->{flags}->{DEBUG_messages}) ) {
-		my @debug_messages = @{$result->{flags}->{DEBUG_messages}};
+	my $return_object = $formatter->return_object;
+	if (defined($return_object->{flags}->{DEBUG_messages}) ) {
+		my @debug_messages = @{$return_object->{flags}->{DEBUG_messages}};
 		$return_string .= (pop @debug_messages ) ||'' ; #avoid error if array was empty
 		if (@debug_messages) {
 			$return_string .= join(" ", @debug_messages);
@@ -820,11 +857,11 @@ sub record_problem_ok1 {
 					$return_string = "";
 		}
 	}
-	if (defined($result->{errors}) ) {
-		$return_string= $result->{errors};
+	if (defined($return_object->{errors}) ) {
+		$return_string= $return_object->{errors};
 	}
-	if (defined($result->{flags}->{WARNING_messages}) ) {
-		my @warning_messages = @{$result->{flags}->{WARNING_messages}};
+	if (defined($return_object->{flags}->{WARNING_messages}) ) {
+		my @warning_messages = @{$return_object->{flags}->{WARNING_messages}};
 		$return_string .= (pop @warning_messages)||''; #avoid error if array was empty
 			$@=undef;
 		if (@warning_messages) {
@@ -848,11 +885,11 @@ sub record_problem_ok1 {
 }
 sub record_problem_ok2 {
 	my $error_flag = shift//'';
-	my $xmlrpc_client = shift;
+	my $formatter = shift;
 	my $file_path = shift;
 	my $some_correct_answers_not_specified = shift;
 	my $pg_duration = shift;  #processing time
-	my $return_object = $xmlrpc_client->return_object;
+	my $return_object = $formatter->return_object;
 	my %scores = ();
 	my $ALL_CORRECT= 0;
 	my $all_correct = ($error_flag)?0:1;
@@ -870,6 +907,9 @@ sub record_problem_ok2 {
 	return $ALL_CORRECT;
 }
 
+###########################################
+# standalonePGproblemRenderer
+###########################################
 
 sub  standaloneRenderer {
     #print "entering standaloneRenderer\n\n";
@@ -976,7 +1016,7 @@ sub  standaloneRenderer {
 sub display_inputs {
 	my %correct_answers = @_;
 	foreach my $key (sort keys %correct_answers) {
-		print "$key => $correct_answers{$key}\n";
+		say "$key => $correct_answers{$key}";
 	}
 }
 sub edit_source_file {

@@ -214,7 +214,7 @@ sub formatRenderedProblem {
 
 	my $format_name = $self->{inputs_ref}->{outputformat}//'standard';
 	# find the appropriate template in WebworkClient folder
-	my $template = do("WebworkClient/${format_name}_format.pl");
+	my $template = do("WebworkClient/${format_name}_format.pl")//'';
 	die "Unknown format name $format_name" unless $template;
 	# interpolate values into template
 	$template =~ s/(\$\w+)/$1/gee;  
