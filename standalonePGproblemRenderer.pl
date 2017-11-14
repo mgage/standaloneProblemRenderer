@@ -183,11 +183,9 @@ use warnings;
 #######################################################
 BEGIN {
 	use File::Basename;
-	$main::dirname = dirname(__FILE__);
+	$main::thisdirname = dirname(__FILE__);
 }
 $ENV{MOD_PERL_API_VERSION} = 2;
-use lib "$main::dirname";
-# some files such as FormatRenderedProblem.pm may need to be in the same directory
 
 
 BEGIN {
@@ -208,6 +206,9 @@ BEGIN {
 
 use lib "$WeBWorK::Constants::WEBWORK_DIRECTORY/lib";
 use lib "$WeBWorK::Constants::PG_DIRECTORY/lib";
+use lib "$main::thisdirname";
+# some files such as FormatRenderedProblem.pm may need to be in the same directory
+
 use Carp;
 use Crypt::SSLeay;  # needed for https
 use Time::HiRes qw/time/;
@@ -383,9 +384,9 @@ BEGIN {
 	eval "use lib '$root_webwork2_dir/lib'"; die $@ if $@;
 } # END BEGIN
 
-	our $hostname = 'http://localhost';
-	our $courseName = 'gage_course';
-	our $rpc_url = '/opaqueserver_rpc';
+# 	our $hostname = 'http://localhost';
+# 	our $courseName = 'gage_course';
+# 	our $rpc_url = '/opaqueserver_rpc';
 	
 # 	my $files_url = '/opaqueserver_files';
 # 	my $wsdl_url = '/opaqueserver_wsdl';
@@ -1027,10 +1028,14 @@ sub edit_source_file {
 
 
 sub create_course_environment {
+    # validate
+    warn "Unable to read webwork2 root directory |$root_webwork2_dir|" unless -r $root_webwork2_dir;
+    warn "Unable to read pg root directory |$root_pg_dir|" unless -r $root_pg_dir;
+
 	my $seed_ce = WeBWorK::CourseEnvironment->new( 
 				{webwork_dir		=>		$root_webwork2_dir, 
-				 courseName         =>      $courseName,
-				 webworkURL         =>      $rpc_url,
+#				 courseName         =>      $courseName,
+#				 webworkURL         =>      $rpc_url,
 				 pg_dir             =>      $root_pg_dir,
 				 });
 	warn "Unable to find environment for course: |$courseName|" unless ref($seed_ce);
