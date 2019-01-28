@@ -126,6 +126,8 @@ same computer.
 =item   --tex
 	Process question in TeX mode and output to the command line
 
+=item   --pdf 
+	Process question in TeX mode, convert to PDF and display.
 	
 =item   
 
@@ -211,6 +213,7 @@ use lib "$main::thisdirname";
 
 use Carp;
 use Crypt::SSLeay;  # needed for https
+use LWP::Protocol::https;
 use Time::HiRes qw/time/;
 use MIME::Base64 qw( encode_base64 decode_base64);
 use Getopt::Long qw[:config no_ignore_case bundling];
@@ -366,7 +369,7 @@ our $PDF_DISPLAY_COMMAND  = PDF_DISPLAY_COMMAND();
 # create course environment and create log files
 ##################################################
 
-our $root_dir;
+#our $root_dir;
 our $root_pg_dir;
 our $root_webwork2_dir;
 
@@ -376,7 +379,7 @@ BEGIN {
 	#Define the OpaqueServer static variables
 	my $topDir = $WeBWorK::Constants::WEBWORK_DIRECTORY;
 	$topDir =~ s|webwork2?$||;   # remove webwork2 link
-	$root_dir = "$topDir/ww_opaque_server";
+	#$root_dir = "$topDir/ww_opaque_server";
 	$root_pg_dir = "$topDir/pg";
 	$WeBWorK::Constants::PG_DIRECTORY = $root_pg_dir;
 	$root_webwork2_dir = "$topDir/webwork2";
